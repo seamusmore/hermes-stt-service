@@ -1,0 +1,24 @@
+[Unit]
+Description=公共 STT 服务 (语音转文字 HTTP API)
+After=network.target
+
+[Service]
+Type=simple
+User=admin
+WorkingDirectory=/mnt/stt-service
+Environment="PATH=/home/admin/.hermes/hermes-agent/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="STT_ENGINE=sensevoice"
+Environment="STT_MODEL=sensevoice-small"
+Environment="OMP_NUM_THREADS=2"
+ExecStart=/home/admin/.hermes/hermes-agent/venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8001 --workers 1
+Restart=always
+RestartSec=10
+StandardOutput=append:/mnt/stt-service/stt-service.log
+StandardError=append:/mnt/stt-service/stt-service.log
+
+# 资源限制
+LimitNOFILE=65535
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
