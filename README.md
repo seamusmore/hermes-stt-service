@@ -37,7 +37,20 @@ STT_ENGINE=sensevoice uvicorn app:app --host 0.0.0.0 --port 8001 --workers 1
 | `sensevoice` | funasr + torch FP32 + mmap | RSS ~530MB | `models/sensevoice/` |
 | `whisper` | faster-whisper | ~370MB（base） | `models/whisper/` |
 
-sensevoice 通过 mmap 懒加载，物理内存占用可被内核回收。空闲超时后自动卸载模型页。
+## mmap 内存管理
+
+SenseVoice 模型文件 893MB（FP32），传统 `torch.load` 全量载入进程堆，固定占用 ~1.4GB RSS。
+
+本项目通过 monkey-patch funasr 的加载函数，改用 `torch.load(mmap=True)` + `param.data` 直接赋值：
+
+| 方式 | RSS | 数据位置 | 内存紧张时 |
+|------|-----|---------|-----------|
+| 全量加载 | ~1360 MB | 进程堆（AnonPages） | swap 到磁盘 |
+| mmap | ~530 MB | page cache（Cached） | 内核直接丢页 |
+
+**关键区别：** page cache 中的页是干净的（有磁盘备份），内核可在内存紧张时瞬间回收，无需 swap。下次推理时缺页中断自动按需读回，仅增加首次延迟 ~4s。
+
+结合空闲超时机制（默认 10 分钟），空闲时自动 `unload()` 释放所有模型页，MemFree 可回到 ~1900MB。
 
 切换引擎：改 systemd `Environment=STT_ENGINE=` 后重启。
 
