@@ -8,7 +8,6 @@ User=admin
 WorkingDirectory=/mnt/stt-service
 Environment="PATH=/home/admin/.hermes/hermes-agent/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="STT_ENGINE=sensevoice"
-Environment="STT_MODEL=sensevoice-small"
 Environment="OMP_NUM_THREADS=2"
 ExecStart=/home/admin/.hermes/hermes-agent/venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8001 --workers 1
 Restart=always

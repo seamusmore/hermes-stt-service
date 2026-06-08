@@ -1,12 +1,12 @@
 """
 STT 引擎抽象层
 
-提供统一的 BaseEngine 接口，不同 STT 后端（faster-whisper、funasr/SenseVoice 等）
+提供统一的 BaseEngine 接口，不同 STT 后端（faster-whisper、funasr/SenseVoice）
 实现各自的 Engine 子类，app.py 通过环境变量 STT_ENGINE 切换。
 
 新增引擎只需：
 1. 在 engines/ 下新建文件，继承 BaseEngine
-2. 在 ENGINE_REGISTRY 中注册
+2. 在 _IMPORT_MAP 中注册
 3. 设置 STT_ENGINE=你的引擎名
 """
 
@@ -139,12 +139,10 @@ def list_engines() -> list[str]:
 def _lazy_import_engines():
     """延迟导入当前需要的引擎模块，触发 @register_engine 装饰器"""
     import os
-    engine = os.environ.get("STT_ENGINE", "sensevoice-native")
+    engine = os.environ.get("STT_ENGINE", "sensevoice")
     _IMPORT_MAP = {
         "whisper": ".whisper_engine",
-        "sensevoice": ".sensevoice_engine",
-        "sensevoice-torch": ".sensevoice_torch",
-        "sensevoice-native": ".sensevoice_native",
+        "sensevoice": ".sensevoice_torch",
     }
     # 只导入目标引擎
     mod = _IMPORT_MAP.get(engine)
@@ -154,6 +152,4 @@ def _lazy_import_engines():
     else:
         # fallback: 导入所有
         from . import whisper_engine  # noqa: F401
-        from . import sensevoice_engine  # noqa: F401
         from . import sensevoice_torch  # noqa: F401
-        from . import sensevoice_native  # noqa: F401

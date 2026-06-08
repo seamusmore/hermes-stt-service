@@ -8,7 +8,7 @@
 启动方式：
     cd /mnt/stt-service
     source /home/admin/.hermes/hermes-agent/venv/bin/activate
-    STT_ENGINE=sensevoice STT_MODEL=sensevoice-small uvicorn app:app --host 0.0.0.0 --port 8001
+    STT_ENGINE=sensevoice uvicorn app:app --host 0.0.0.0 --port 8001
 
 API 端点：
     POST /transcribe - 转录音频文件
@@ -49,17 +49,17 @@ logger = logging.getLogger("stt-service")
 
 SERVICE_PORT = int(os.getenv("STT_SERVICE_PORT", "8001"))
 SERVICE_HOST = os.getenv("STT_SERVICE_HOST", "0.0.0.0")
-WORKERS = int(os.getenv("STT_SERVICE_WORKERS", "2"))
+WORKERS = int(os.getenv("STT_SERVICE_WORKERS", "1"))
 
 # 引擎配置：whisper | sensevoice
-STT_ENGINE = os.getenv("STT_ENGINE", "whisper")
+STT_ENGINE = os.getenv("STT_ENGINE", "sensevoice")
 STT_MODEL = os.getenv("STT_MODEL", "")  # 空=引擎默认模型
 STT_LANGUAGE = os.getenv("STT_LANGUAGE", "zh")
 MAX_AUDIO_SIZE = int(os.getenv("MAX_AUDIO_SIZE_MB", "25")) * 1024 * 1024
 REQUEST_TIMEOUT = int(os.getenv("STT_REQUEST_TIMEOUT", "60"))
 
 # 缓存根目录
-CACHE_DIR = Path.home() / ".hermes" / "stt_cache"
+CACHE_DIR = Path.home() / ".hermes" / "sensevoice_cache"
 # 兼容旧 whisper_cache 路径
 WHISPER_CACHE_DIR = Path.home() / ".hermes" / "whisper_cache"
 
@@ -149,7 +149,7 @@ def get_cache_status() -> dict:
     # 探测 sensevoice 缓存
     sv_cache = CACHE_DIR / "sensevoice"
     if sv_cache.exists():
-        downloaded_models.append("sensevoice-small")
+        downloaded_models.append("sensevoice")
 
     return {
         "cache_dir": str(CACHE_DIR),
@@ -175,9 +175,9 @@ def list_downloaded_models() -> list:
     # sensevoice
     sv_cache = CACHE_DIR / "sensevoice"
     downloaded.append({
-        "name": "sensevoice-small",
-        "repo_id": "iic/SenseVoiceSmall",
-        "size_mb": 234,
+        "name": "sensevoice",
+        "repo_id": "iic/SenseVoiceSmall (funasr+torch)",
+        "size_mb": 893,
         "downloaded": sv_cache.exists(),
     })
     return downloaded
@@ -216,12 +216,12 @@ def download_model(model_name: str) -> dict:
             logger.error(f"Failed to download model {model_name}: {e}", exc_info=True)
             return {"success": False, "error": f"Download failed: {e}"}
 
-    # SenseVoice 通过 funasr 首次加载时自动下载
+    # SenseVoice-torch 通过 funasr 首次加载时自动下载
     if model_name.startswith("sensevoice"):
         return {
             "success": False,
-            "error": "SenseVoice models are auto-downloaded on first load via funasr. "
-                     "Just start the service with STT_ENGINE=sensevoice and it will download automatically.",
+            "error": "SenseVoice-torch model is auto-downloaded on first load via funasr. "
+                     "Just start the service with STT_ENGINE=sensevoice.",
         }
 
     return {"success": False, "error": f"Unknown model: {model_name}"}

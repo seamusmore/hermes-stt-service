@@ -1,8 +1,7 @@
 """
-SenseVoice 引擎实现（funasr + torch FP16）
+SenseVoice 引擎实现（funasr + torch FP32）
 
-model.pt 已替换为 FP16 权重（447MB），funasr 直接加载即可。
-切换精度：替换 model.pt → model_fp32_backup.pt / model_int8.pt → model.pt
+model.pt 为 FP32 权重（893MB），funasr 直接加载。
 """
 
 from __future__ import annotations
@@ -22,18 +21,18 @@ logger = logging.getLogger("stt-service")
 _RICH_TAG_RE = re.compile(r"<\|[^|]*\|>")
 
 
-@register_engine("sensevoice-torch")
-class SenseVoiceTorchEngine(BaseEngine):
-    """SenseVoice-Small 引擎 (funasr, model.pt 即最终精度)"""
+@register_engine("sensevoice")
+class SenseVoiceEngine(BaseEngine):
+    """SenseVoice-Small 引擎 (funasr+torch)"""
 
-    MODEL_DIR = "sensevoice_torch"
+    MODEL_DIR = "sensevoice"
 
     def info(self) -> EngineInfo:
         return EngineInfo(
-            name="sensevoice-torch",
+            name="sensevoice",
             display_name="SenseVoice-Small (funasr+torch)",
-            models=["sensevoice-torch"],
-            default_model="sensevoice-torch",
+            models=["sensevoice"],
+            default_model="sensevoice",
             supports_language_param=False,
             supports_streaming=False,
         )
@@ -45,7 +44,7 @@ class SenseVoiceTorchEngine(BaseEngine):
         from funasr import AutoModel
 
         model_dir = str(self.cache_dir / self.MODEL_DIR)
-        logger.info("[sensevoice-torch] Loading from %s", model_dir)
+        logger.info("[sensevoice] Loading from %s", model_dir)
 
         self._model = AutoModel(
             model=model_dir,
@@ -53,8 +52,8 @@ class SenseVoiceTorchEngine(BaseEngine):
             device="cpu",
             ncpu=2,
         )
-        self._model_name = "sensevoice-torch"
-        logger.info("[sensevoice-torch] Model ready")
+        self._model_name = "sensevoice"
+        logger.info("[sensevoice] Model ready")
 
     def load_model(self, model_name: str) -> None:
         self._ensure_model_loaded()
@@ -105,4 +104,4 @@ class SenseVoiceTorchEngine(BaseEngine):
             self._model = None
             self._model_name = None
             gc.collect()
-            logger.info("[sensevoice-torch] Model unloaded")
+            logger.info("[sensevoice] Model unloaded")
