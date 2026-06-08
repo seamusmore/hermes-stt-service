@@ -143,6 +143,7 @@ def _lazy_import_engines():
     _IMPORT_MAP = {
         "whisper": ".whisper_engine",
         "sensevoice": ".sensevoice_torch",
+        "sensevoice-q8": ".sensevoice_q8",
     }
     # 只导入目标引擎
     mod = _IMPORT_MAP.get(engine)
@@ -153,3 +154,4 @@ def _lazy_import_engines():
         # fallback: 导入所有
         from . import whisper_engine  # noqa: F401
         from . import sensevoice_torch  # noqa: F401
+        from . import sensevoice_q8  # noqa: F401
