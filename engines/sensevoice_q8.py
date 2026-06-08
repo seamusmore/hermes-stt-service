@@ -1,8 +1,9 @@
 """
 SenseVoice Q8 引擎实现（sherpa-onnx + INT8 量化 ONNX）
 
-model.int8.onnx 为 INT8 量化权重（~228MB），通过 onnxruntime 推理，
-RSS ~400MB。比原 FP32 893MB 节省 ~500MB 内存。
+model.int8.onnx 为 INT8 量化权重（~228MB），通过 onnxruntime 推理。
+Monkey patch onnxruntime 的 SessionOptions.enable_mmap，让模型文件以 mmap
+方式映射（不进堆），效果等同于旧引擎对 funasr 做的 torch.load(mmap=True)。
 """
 
 from __future__ import annotations
@@ -18,6 +19,37 @@ from . import BaseEngine, TranscribeResult, EngineInfo, register_engine
 logger = logging.getLogger("stt-service")
 
 _RICH_TAG_RE = re.compile(r"<\|[^|]*\|>")
+
+
+# ---------------------------------------------------------------------------
+# Monkey patch onnxruntime：强制 enable_mmap
+# ---------------------------------------------------------------------------
+
+def _patch_ort_mmap():
+    """替换 onnxruntime.InferenceSession.__init__，强制启用 mmap 加载模型。"""
+    import onnxruntime as ort
+
+    _original_init = ort.InferenceSession.__init__
+
+    def _patched_init(self, path_or_bytes, sess_options=None,
+                      providers=None, provider_options=None, **kwargs):
+        if sess_options is None:
+            sess_options = ort.SessionOptions()
+        sess_options.enable_mmap = True
+        _original_init(self, path_or_bytes,
+                       sess_options=sess_options,
+                       providers=providers,
+                       provider_options=provider_options,
+                       **kwargs)
+
+    ort.InferenceSession.__init__ = _patched_init
+    return _original_init
+
+
+def _restore_ort(_original_init):
+    """恢复 onnxruntime 原始 __init__"""
+    import onnxruntime as ort
+    ort.InferenceSession.__init__ = _original_init
 
 
 @register_engine("sensevoice-q8")
@@ -54,13 +86,17 @@ class SenseVoiceQ8Engine(BaseEngine):
 
         logger.info("[sensevoice-q8] Loading from %s", model_path)
 
-        self._model = sherpa_onnx.OfflineRecognizer.from_sense_voice(
-            model=model_path,
-            tokens=tokens_path,
-            num_threads=2,
-            use_itn=True,
-            language="auto",
-        )
+        _orig_ort = _patch_ort_mmap()
+        try:
+            self._model = sherpa_onnx.OfflineRecognizer.from_sense_voice(
+                model=model_path,
+                tokens=tokens_path,
+                num_threads=2,
+                use_itn=True,
+                language="auto",
+            )
+        finally:
+            _restore_ort(_orig_ort)
 
         self._model_name = "sensevoice-q8"
         logger.info("[sensevoice-q8] Model ready (INT8, ~228MB)")
