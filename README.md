@@ -37,6 +37,23 @@ STT_ENGINE=sensevoice uvicorn app:app --host 0.0.0.0 --port 8001 --workers 1
 | `sensevoice` | funasr + torch FP32 + mmap | RSS ~530MB | `models/sensevoice/` |
 | `whisper` | faster-whisper | ~370MB（base） | `models/whisper/` |
 
+## 💡 复用 Hermes Agent 的 venv
+
+生产环境的 systemd unit 不创建独立 venv，直接复用 Hermes Agent 的 Python 运行环境：
+
+```
+Environment="PATH=/home/admin/.hermes/hermes-agent/venv/bin:/usr/local/bin:/usr/bin:/bin"
+```
+
+`funasr`、`torch`、`modelscope` 等依赖均从 Hermes 的 venv 加载。手动启动时：
+
+```bash
+source /home/admin/.hermes/hermes-agent/venv/bin/activate
+STT_ENGINE=sensevoice uvicorn app:app --host 0.0.0.0 --port 8001
+```
+
+好处：省去维护独立 venv 的开销，依赖版本与 Hermes Agent 保持一致。
+
 ## mmap 内存管理
 
 SenseVoice 模型文件 893MB（FP32），传统 `torch.load` 全量载入进程堆，固定占用 ~1.4GB RSS。
@@ -70,8 +87,12 @@ SenseVoice 模型文件 893MB（FP32），传统 `torch.load` 全量载入进程
 ```bash
 git clone https://github.com/seamusmore/hermes-stt-service.git /mnt/stt-service
 cd /mnt/stt-service
-python3 -m venv venv
-source venv/bin/activate
+
+# 复用 Hermes Agent 的 venv（推荐）或自建：
+# source /home/admin/.hermes/hermes-agent/venv/bin/activate
+# 或者：
+python3 -m venv venv && source venv/bin/activate
+
 pip install -r requirements.txt
 
 # 安装 systemd 服务
