@@ -1,7 +1,8 @@
 """
 SenseVoice 引擎实现（funasr + torch FP32）
 
-model.pt 为 FP32 权重（893MB），通过 mmap 加载，RSS ~400MB。
+model.pt 为 FP32 权重（893MB），通过 mmap 懒加载，RSS ~530MB。
+内核可在内存紧张时回收模型页（干净页无需 swap），空闲超时后自动 unload 释放。
 """
 
 from __future__ import annotations
@@ -11,8 +12,6 @@ import gc
 import logging
 from pathlib import Path
 from typing import Optional
-
-import soundfile as sf
 
 from . import BaseEngine, TranscribeResult, EngineInfo, register_engine
 
