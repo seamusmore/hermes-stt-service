@@ -41,7 +41,7 @@ class WhisperEngine(BaseEngine):
         )
 
     # 旧缓存目录（兼容）
-    LEGACY_CACHE_DIR = Path.home() / ".hermes" / "whisper_cache"
+    LEGACY_CACHE_DIR = Path("/mnt/stt-service/models/whisper")
 
     def _resolve_download_root(self) -> str:
         """确定模型下载/查找目录：优先旧缓存，其次新缓存"""

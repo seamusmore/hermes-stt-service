@@ -62,10 +62,9 @@ REQUEST_TIMEOUT = int(os.getenv("STT_REQUEST_TIMEOUT", "60"))
 # 空闲超时（秒）：超时后自动卸载模型，释放 page cache
 IDLE_TIMEOUT = int(os.getenv("STT_IDLE_TIMEOUT", "600"))
 
-# 缓存根目录
-CACHE_DIR = Path.home() / ".hermes" / "sensevoice_cache"
-# 兼容旧 whisper_cache 路径
-WHISPER_CACHE_DIR = Path.home() / ".hermes" / "whisper_cache"
+# 模型缓存根目录
+CACHE_DIR = Path("/mnt/stt-service/models")
+WHISPER_CACHE_DIR = CACHE_DIR / "whisper"
 
 SUPPORTED_FORMATS = {
     ".mp3", ".mp4", ".mpeg", ".mpga", ".m4a",
