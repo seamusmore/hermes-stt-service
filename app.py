@@ -60,7 +60,7 @@ MAX_AUDIO_SIZE = int(os.getenv("MAX_AUDIO_SIZE_MB", "25")) * 1024 * 1024
 REQUEST_TIMEOUT = int(os.getenv("STT_REQUEST_TIMEOUT", "60"))
 
 # 空闲超时（秒）：超时后自动卸载模型，释放 page cache
-IDLE_TIMEOUT = int(os.getenv("STT_IDLE_TIMEOUT", "300"))
+IDLE_TIMEOUT = int(os.getenv("STT_IDLE_TIMEOUT", "600"))
 
 # 缓存根目录
 CACHE_DIR = Path.home() / ".hermes" / "sensevoice_cache"
