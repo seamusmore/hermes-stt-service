@@ -32,6 +32,11 @@ from pathlib import Path
 from typing import Optional
 from contextlib import asynccontextmanager
 
+# 确保项目根目录在 sys.path，支持在任何目录下启动服务
+_svc_root = Path(__file__).resolve().parent
+if str(_svc_root) not in sys.path:
+    sys.path.insert(0, str(_svc_root))
+
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
