@@ -62,8 +62,8 @@ REQUEST_TIMEOUT = int(os.getenv("STT_REQUEST_TIMEOUT", "60"))
 # 空闲超时（秒）：超时后自动卸载模型，释放 page cache
 IDLE_TIMEOUT = int(os.getenv("STT_IDLE_TIMEOUT", "600"))
 
-# 模型缓存根目录
-CACHE_DIR = Path("/mnt/stt-service/models")
+# 模型缓存根目录（可通过 STT_MODEL_DIR 环境变量覆盖）
+CACHE_DIR = Path(os.getenv("STT_MODEL_DIR", "/mnt/stt-service/models"))
 WHISPER_CACHE_DIR = CACHE_DIR / "whisper"
 
 SUPPORTED_FORMATS = {
