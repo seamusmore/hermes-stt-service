@@ -25,6 +25,7 @@ API 端点：
 import os
 import sys
 import time
+import threading
 import logging
 import tempfile
 from pathlib import Path
@@ -57,6 +58,9 @@ STT_MODEL = os.getenv("STT_MODEL", "")  # 空=引擎默认模型
 STT_LANGUAGE = os.getenv("STT_LANGUAGE", "zh")
 MAX_AUDIO_SIZE = int(os.getenv("MAX_AUDIO_SIZE_MB", "25")) * 1024 * 1024
 REQUEST_TIMEOUT = int(os.getenv("STT_REQUEST_TIMEOUT", "60"))
+
+# 空闲超时（秒）：超时后自动卸载模型，释放 page cache
+IDLE_TIMEOUT = int(os.getenv("STT_IDLE_TIMEOUT", "300"))
 
 # 缓存根目录
 CACHE_DIR = Path.home() / ".hermes" / "sensevoice_cache"
@@ -95,6 +99,50 @@ def _resolve_model() -> str:
         return STT_MODEL
     engine = _get_engine()
     return engine.info().default_model
+
+
+# ---------------------------------------------------------------------------
+# 空闲超时 —— 超时后自动卸载模型释放 page cache
+# ---------------------------------------------------------------------------
+
+_last_activity = time.time()
+_idle_lock = threading.Lock()
+_idle_monitor_running = False
+
+
+def _touch_activity():
+    """记录一次活动，重置空闲计时器"""
+    global _last_activity
+    with _idle_lock:
+        _last_activity = time.time()
+
+
+def _get_idle_seconds() -> float:
+    with _idle_lock:
+        return time.time() - _last_activity
+
+
+def _idle_monitor():
+    """后台线程：每 30s 检查空闲状态，超时则卸载模型"""
+    global _idle_monitor_running
+    _idle_monitor_running = True
+    logger.info(f"Idle monitor started (timeout={IDLE_TIMEOUT}s)")
+    while _idle_monitor_running:
+        time.sleep(30)
+        if not _idle_monitor_running:
+            break
+        idle_secs = _get_idle_seconds()
+        if idle_secs >= IDLE_TIMEOUT:
+            engine = _get_engine()
+            if engine.model_loaded:
+                logger.info(f"Idle {idle_secs:.0f}s >= {IDLE_TIMEOUT}s, unloading model...")
+                engine.unload()
+                logger.info("Model unloaded (idle timeout)")
+
+
+def _stop_idle_monitor():
+    global _idle_monitor_running
+    _idle_monitor_running = False
 
 
 # ---------------------------------------------------------------------------
@@ -294,18 +342,25 @@ async def lifespan(app: FastAPI):
     logger.info("STT Service starting...")
     logger.info(f"Engine: {STT_ENGINE}, Language: {STT_LANGUAGE}")
     logger.info(f"Cache dir: {CACHE_DIR}")
+    logger.info(f"Idle timeout: {IDLE_TIMEOUT}s")
 
     try:
         engine = _get_engine()
         model = _resolve_model()
         logger.info(f"Loading model: {model}")
         engine.load_model(model)
+        _touch_activity()
         logger.info(f"✅ STT Service ready (engine={STT_ENGINE}, model={model})")
     except Exception as e:
         logger.error(f"❌ Failed to load model: {e}")
 
+    # 启动空闲超时监控线程
+    monitor_thread = threading.Thread(target=_idle_monitor, daemon=True, name="idle-monitor")
+    monitor_thread.start()
+
     yield
 
+    _stop_idle_monitor()
     logger.info("STT Service shutting down...")
 
 
@@ -344,6 +399,7 @@ class HealthResponse(BaseModel):
     engine: str
     model_loaded: bool
     model_name: Optional[str]
+    idle_seconds: float = 0
     version: str
 
 
@@ -387,6 +443,7 @@ async def health_check():
         engine=STT_ENGINE,
         model_loaded=engine.model_loaded,
         model_name=engine.model_name,
+        idle_seconds=_get_idle_seconds(),
         version="2.0.0",
     )
 
@@ -493,6 +550,9 @@ async def transcribe_audio(
 
         # 获取引擎
         engine = _get_engine()
+
+        # 重置空闲计时器
+        _touch_activity()
 
         # 确定模型（如果请求指定了不同模型，需要重新加载）
         use_model = model if model else _resolve_model()
