@@ -1,6 +1,6 @@
 # STT 语音转写服务
 
-为 Hermes 提供语音转文字 HTTP API，支持 SenseVoice（中文优化 + 情感检测）和 Whisper（多语言）。
+为 Hermes 提供本地语音转文字 HTTP API，支持 SenseVoice（中文优化 + 情感检测）和 Whisper（多语言）。
 
 ## 快速启动
 
