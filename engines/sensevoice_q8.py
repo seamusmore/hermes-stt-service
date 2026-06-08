@@ -1,9 +1,9 @@
 """
 SenseVoice Q8 引擎实现（sherpa-onnx + INT8 量化 ONNX）
 
-model.int8.onnx 为 INT8 量化权重（~228MB），通过 onnxruntime 推理。
-Monkey patch onnxruntime 的 SessionOptions.enable_mmap，让模型文件以 mmap
-方式映射（不进堆），效果等同于旧引擎对 funasr 做的 torch.load(mmap=True)。
+model.int8.onnx 为 INT8 量化权重（~228MB），通过 sherpa-onnx → onnxruntime 推理。
+Monkey patch sherpa_onnx.OfflineRecognizer.from_sense_voice 注入 mmap 加载，
+效果等同于旧引擎对 funasr.load_pretrained_model 做的 torch.load(mmap=True)。
 """
 
 from __future__ import annotations
@@ -22,35 +22,50 @@ _RICH_TAG_RE = re.compile(r"<\|[^|]*\|>")
 
 
 # ---------------------------------------------------------------------------
-# Monkey patch onnxruntime：强制 enable_mmap
+# Monkey patch sherpa-onnx：拦截 from_sense_voice，注入 mmap
 # ---------------------------------------------------------------------------
 
-def _patch_ort_mmap():
-    """替换 onnxruntime.InferenceSession.__init__，强制启用 mmap 加载模型。"""
-    import onnxruntime as ort
+def _patch_sherpa_onnx_mmap():
+    """替换 sherpa_onnx.OfflineRecognizer.from_sense_voice，注入 mmap 加载。"""
+    import sherpa_onnx
 
-    _original_init = ort.InferenceSession.__init__
+    _original = sherpa_onnx.OfflineRecognizer.from_sense_voice
 
-    def _patched_init(self, path_or_bytes, sess_options=None,
-                      providers=None, provider_options=None, **kwargs):
-        if sess_options is None:
-            sess_options = ort.SessionOptions()
-        sess_options.enable_mmap = True
-        _original_init(self, path_or_bytes,
+    @classmethod
+    def _patched(cls, model, tokens, num_threads=1, **kwargs):
+        import onnxruntime as ort
+        _orig_init = ort.InferenceSession.__init__
+
+        def _mmap_init(self, path_or_bytes, sess_options=None,
+                       providers=None, provider_options=None, **ikwargs):
+            if sess_options is None:
+                sess_options = ort.SessionOptions()
+            sess_options.enable_mmap = True
+            _orig_init(self, path_or_bytes,
                        sess_options=sess_options,
                        providers=providers,
                        provider_options=provider_options,
-                       **kwargs)
+                       **ikwargs)
 
-    ort.InferenceSession.__init__ = _patched_init
-    return _original_init
+        ort.InferenceSession.__init__ = _mmap_init
+        try:
+            return _original.__func__(cls, model, tokens, num_threads, **kwargs)
+        finally:
+            ort.InferenceSession.__init__ = _orig_init
+
+    sherpa_onnx.OfflineRecognizer.from_sense_voice = _patched
+    return _original
 
 
-def _restore_ort(_original_init):
-    """恢复 onnxruntime 原始 __init__"""
-    import onnxruntime as ort
-    ort.InferenceSession.__init__ = _original_init
+def _restore_sherpa_onnx(_original):
+    """恢复 sherpa_onnx.OfflineRecognizer.from_sense_voice 原始方法"""
+    import sherpa_onnx
+    sherpa_onnx.OfflineRecognizer.from_sense_voice = _original
 
+
+# ---------------------------------------------------------------------------
+# 引擎
+# ---------------------------------------------------------------------------
 
 @register_engine("sensevoice-q8")
 class SenseVoiceQ8Engine(BaseEngine):
@@ -86,7 +101,7 @@ class SenseVoiceQ8Engine(BaseEngine):
 
         logger.info("[sensevoice-q8] Loading from %s", model_path)
 
-        _orig_ort = _patch_ort_mmap()
+        _orig = _patch_sherpa_onnx_mmap()
         try:
             self._model = sherpa_onnx.OfflineRecognizer.from_sense_voice(
                 model=model_path,
@@ -96,10 +111,10 @@ class SenseVoiceQ8Engine(BaseEngine):
                 language="auto",
             )
         finally:
-            _restore_ort(_orig_ort)
+            _restore_sherpa_onnx(_orig)
 
         self._model_name = "sensevoice-q8"
-        logger.info("[sensevoice-q8] Model ready (INT8, ~228MB)")
+        logger.info("[sensevoice-q8] Model ready (INT8 mmap, ~228MB)")
 
     def load_model(self, model_name: str) -> None:
         self._ensure_model_loaded()
@@ -114,10 +129,9 @@ class SenseVoiceQ8Engine(BaseEngine):
 
         start = time.time()
 
-        # sherpa-onnx SenseVoice 使用 auto 自动检测语言
         samples, sr = sf.read(audio_path, dtype="float32")
         if samples.ndim > 1:
-            samples = samples[:, 0]  # 取第一声道
+            samples = samples[:, 0]
 
         stream = self._model.create_stream()
         stream.accept_waveform(sr, samples)
@@ -127,7 +141,6 @@ class SenseVoiceQ8Engine(BaseEngine):
 
         raw_text = stream.result.text
 
-        # 提取情感和事件标签
         emotion = None
         event = None
         emo_match = re.search(r"<\|EMO_(\w+)\|>", raw_text)
@@ -137,7 +150,6 @@ class SenseVoiceQ8Engine(BaseEngine):
         if event_tags:
             event = ",".join(event_tags).lower()
 
-        # 清理标签得到纯文本
         text = _RICH_TAG_RE.sub("", raw_text).strip()
 
         return TranscribeResult(
