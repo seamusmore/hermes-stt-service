@@ -24,9 +24,9 @@ _RICH_TAG_RE = re.compile(r"<\|[^|]*\|>")
 def _patch_funasr_loader():
     """替换 funasr 的 load_pretrained_model，用 mmap 避免全量加载到堆。"""
     import torch
-    import funasr.train_utils.load_pretrained_model as mod
+    import funasr.auto.auto_model as auto_mod
 
-    _original = mod.load_pretrained_model
+    _original = auto_mod.load_pretrained_model
 
     def _mmap_loader(path, model, ignore_init_mismatch=True,
                      map_location="cpu", oss_bucket=None,
@@ -71,13 +71,13 @@ def _patch_funasr_loader():
         logger.info("[sensevoice] Loading ckpt: %s, matched=%d params (mmap)",
                     path, matched)
 
-    mod.load_pretrained_model = _mmap_loader
+    auto_mod.load_pretrained_model = _mmap_loader
     return _original
 
 
 def _restore_funasr_loader(original):
-    import funasr.train_utils.load_pretrained_model as mod
-    mod.load_pretrained_model = original
+    import funasr.auto.auto_model as auto_mod
+    auto_mod.load_pretrained_model = original
 
 
 @register_engine("sensevoice")
