@@ -1,7 +1,7 @@
 """
 SenseVoice 引擎实现（funasr + torch FP32）
 
-model.pt 为 FP32 权重（893MB），funasr 直接加载。
+model.pt 为 FP32 权重（893MB），通过 mmap 加载，RSS ~400MB。
 """
 
 from __future__ import annotations
@@ -21,9 +21,68 @@ logger = logging.getLogger("stt-service")
 _RICH_TAG_RE = re.compile(r"<\|[^|]*\|>")
 
 
+def _patch_funasr_loader():
+    """替换 funasr 的 load_pretrained_model，用 mmap 避免全量加载到堆。"""
+    import torch
+    import funasr.train_utils.load_pretrained_model as mod
+
+    _original = mod.load_pretrained_model
+
+    def _mmap_loader(path, model, ignore_init_mismatch=True,
+                     map_location="cpu", oss_bucket=None,
+                     scope_map=None, excludes=None, **kwargs):
+        # 用 mmap 加载，避免 893MB 全进堆
+        checkpoint = torch.load(path, map_location=map_location, mmap=True)
+        src_state = checkpoint.get("state_dict",
+                    checkpoint.get("model_state_dict",
+                    checkpoint.get("model", checkpoint)))
+
+        if isinstance(scope_map, str):
+            scope_map = scope_map.split(",")
+        scope_map = (scope_map or []) + ["module.", "None"]
+
+        if excludes is not None and isinstance(excludes, str):
+            excludes = excludes.split(",")
+
+        matched = 0
+        for name, param in model.named_parameters():
+            if excludes:
+                skip = any(name.startswith(ex) for ex in excludes)
+                if skip:
+                    continue
+
+            k_src = name
+            for i in range(0, len(scope_map), 2):
+                sp = scope_map[i] if scope_map[i].lower() != "none" else ""
+                dp = scope_map[i + 1] if scope_map[i + 1].lower() != "none" else ""
+                if dp == "" and (sp + name) in src_state:
+                    k_src = sp + name
+                elif name.startswith(dp) and name.replace(dp, sp, 1) in src_state:
+                    k_src = name.replace(dp, sp, 1)
+
+            if k_src in src_state:
+                src_tensor = src_state[k_src]
+                if ignore_init_mismatch and param.shape != src_tensor.shape:
+                    continue
+                # 直接赋值，不复制：param.data 指向 mmap 张量的底层存储
+                param.data = src_tensor
+                matched += 1
+
+        logger.info("[sensevoice] Loading ckpt: %s, matched=%d params (mmap)",
+                    path, matched)
+
+    mod.load_pretrained_model = _mmap_loader
+    return _original
+
+
+def _restore_funasr_loader(original):
+    import funasr.train_utils.load_pretrained_model as mod
+    mod.load_pretrained_model = original
+
+
 @register_engine("sensevoice")
 class SenseVoiceEngine(BaseEngine):
-    """SenseVoice-Small 引擎 (funasr+torch)"""
+    """SenseVoice-Small 引擎 (funasr+torch, mmap)"""
 
     MODEL_DIR = "sensevoice"
 
@@ -44,14 +103,19 @@ class SenseVoiceEngine(BaseEngine):
         from funasr import AutoModel
 
         model_dir = str(self.cache_dir / self.MODEL_DIR)
-        logger.info("[sensevoice] Loading from %s", model_dir)
+        logger.info("[sensevoice] Loading from %s (mmap)", model_dir)
 
-        self._model = AutoModel(
-            model=model_dir,
-            disable_update=True,
-            device="cpu",
-            ncpu=2,
-        )
+        _orig_loader = _patch_funasr_loader()
+        try:
+            self._model = AutoModel(
+                model=model_dir,
+                disable_update=True,
+                device="cpu",
+                ncpu=2,
+            )
+        finally:
+            _restore_funasr_loader(_orig_loader)
+
         self._model_name = "sensevoice"
         logger.info("[sensevoice] Model ready")
 

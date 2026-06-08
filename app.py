@@ -162,15 +162,25 @@ def get_cache_status() -> dict:
 def list_downloaded_models() -> list:
     downloaded = []
     for model_name, repo_id in MODEL_REPO_MAP.items():
+        repo_dir_name = f"models--{repo_id.replace('/', '--')}"
+        found = False
         for cache_root in [CACHE_DIR, WHISPER_CACHE_DIR]:
-            repo_dir_name = f"models--{repo_id.replace('/', '--')}"
+            if (cache_root / repo_dir_name).exists():
+                downloaded.append({
+                    "name": model_name,
+                    "repo_id": repo_id,
+                    "size_mb": MODEL_SIZE_MAP.get(model_name, 0),
+                    "downloaded": True,
+                })
+                found = True
+                break
+        if not found:
             downloaded.append({
                 "name": model_name,
                 "repo_id": repo_id,
                 "size_mb": MODEL_SIZE_MAP.get(model_name, 0),
-                "downloaded": (cache_root / repo_dir_name).exists(),
+                "downloaded": False,
             })
-            break  # 只加一次
 
     # sensevoice
     sv_cache = CACHE_DIR / "sensevoice"
