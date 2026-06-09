@@ -66,25 +66,31 @@ class WhisperEngine(BaseEngine):
         download_root = self._resolve_download_root()
         Path(download_root).mkdir(parents=True, exist_ok=True)
 
-        # 先尝试离线加载，失败则自动下载
-        try:
-            self._model = WhisperModel(
-                full_name,
-                device="cpu",
-                compute_type="int8",
-                download_root=download_root,
-                local_files_only=True,
-            )
-        except Exception:
-            logger.info("[whisper] Model not cached, auto-downloading %s...", full_name)
+        # 检查缓存：模型文件目录是否存在
+        cached = False
+        repo_dir_name = f"models--{full_name.replace('/', '--')}"
+        for d in [self.LEGACY_CACHE_DIR, self.cache_dir]:
+            if (d / repo_dir_name).exists():
+                cached = True
+                break
+
+        if cached:
+            logger.info("[whisper] Model found in cache, loading offline")
+            local_only = True
+        else:
+            logger.info("[whisper] Model not cached, auto-downloading from HF mirror...")
             os.environ["HF_HUB_OFFLINE"] = "0"
-            self._model = WhisperModel(
-                full_name,
-                device="cpu",
-                compute_type="int8",
-                download_root=download_root,
-                local_files_only=False,
-            )
+            local_only = False
+
+        self._model = WhisperModel(
+            full_name,
+            device="cpu",
+            compute_type="int8",
+            download_root=download_root,
+            local_files_only=local_only,
+        )
+
+        if not local_only:
             os.environ["HF_HUB_OFFLINE"] = "1"
 
         self._model_name = model_name
