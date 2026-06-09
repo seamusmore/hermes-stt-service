@@ -127,9 +127,3 @@ sudo systemctl restart stt-service
 grep -E "VmRSS|RssAnon|RssFile" /proc/$(ss -tlnp | grep 8001 | grep -oP 'pid=\K\d+')/status
 ```
 
-## 铁律
-
-1. **不准改引擎代码** —— 模型目录或文件有问题先搬文件，别改 `sensevoice_*.py`。
-2. **不准删模型文件** —— `models/` 下的文件是用户的，旧模型留着通过配置切换。
-3. **复用 Hermes venv** —— 不创建独立 Python 环境。
-4. **目录扁平** —— 不嵌套 `iic/SenseVoiceSmall/` 多层结构。
