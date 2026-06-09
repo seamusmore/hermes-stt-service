@@ -81,6 +81,7 @@ class SenseVoiceQ8Engine(BaseEngine):
             default_model="sensevoice-q8",
             supports_language_param=True,
             supports_streaming=False,
+            modelscope_repo="poloniumrock/SenseVoiceSmallOnnx",
         )
 
     def _ensure_model_loaded(self) -> None:
@@ -94,10 +95,7 @@ class SenseVoiceQ8Engine(BaseEngine):
         tokens_path = str(model_dir / "tokens.txt")
 
         if not Path(model_path).exists():
-            raise FileNotFoundError(
-                f"Model file not found: {model_path}. "
-                f"Please download the Q8 model first."
-            )
+            self._auto_download(model_dir, model_path)
 
         logger.info("[sensevoice-q8] Loading from %s", model_path)
 

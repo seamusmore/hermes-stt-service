@@ -93,6 +93,7 @@ class SenseVoiceEngine(BaseEngine):
             default_model="sensevoice",
             supports_language_param=False,
             supports_streaming=False,
+            modelscope_repo="iic/SenseVoiceSmall",
         )
 
     def _ensure_model_loaded(self) -> None:

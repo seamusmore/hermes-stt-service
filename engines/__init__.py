@@ -45,6 +45,7 @@ class EngineInfo:
     default_model: str = ""
     supports_language_param: bool = True
     supports_streaming: bool = False
+    modelscope_repo: str = ""  # ModelScope 仓库 ID，用于自动下载
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +102,55 @@ class BaseEngine(ABC):
             "model_loaded": self.model_loaded,
             "model_name": self._model_name,
         }
+
+    def _auto_download(self, model_dir: Path, expected_file: str) -> None:
+        """自动从 ModelScope 下载模型并展平到目标目录。
+
+        调用时机：模型文件不存在时由 _ensure_model_loaded 触发。
+        下载完成后自动展平子目录结构（去掉 iic/SenseVoiceSmall/ 等嵌套）。
+        """
+        import os
+        import shutil
+        import tempfile
+        from modelscope.hub.snapshot_download import snapshot_download
+
+        repo_id = self.info().modelscope_repo
+        if not repo_id:
+            raise FileNotFoundError(
+                f"Model file not found: {expected_file}. "
+                f"No ModelScope repo configured for auto-download."
+            )
+
+        model_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("[%s] Auto-downloading model from ModelScope: %s", self.info().name, repo_id)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            downloaded = snapshot_download(repo_id, cache_dir=tmp_dir)
+            # 展平：如果 download 后有多层子目录，把文件搬到 model_dir/
+            src = Path(downloaded)
+            if not src.exists():
+                # snapshot_download 可能把文件放在 cache_dir 的嵌套路径中
+                for root, dirs, files in os.walk(tmp_dir):
+                    for f in files:
+                        rel = Path(root) / f
+                        if not (model_dir / f).exists():
+                            shutil.copy2(str(rel), str(model_dir / f))
+                            logger.info("[%s] Copied: %s", self.info().name, f)
+            else:
+                for f in src.iterdir():
+                    dst = model_dir / f.name
+                    if not dst.exists():
+                        if f.is_dir():
+                            shutil.copytree(str(f), str(dst))
+                        else:
+                            shutil.copy2(str(f), str(dst))
+                        logger.info("[%s] Copied: %s", self.info().name, f.name)
+
+        if not Path(expected_file).exists():
+            raise FileNotFoundError(
+                f"Auto-download completed but model file still not found: {expected_file}"
+            )
+        logger.info("[%s] Auto-download complete", self.info().name)
 
 
 # ---------------------------------------------------------------------------
