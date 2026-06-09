@@ -106,7 +106,7 @@ class SenseVoiceEngine(BaseEngine):
         model_pt = Path(model_dir) / "model.pt"
 
         if not model_pt.exists():
-            self._download_model(model_dir)
+            self._auto_download(Path(model_dir), str(model_pt))
 
         logger.info("[sensevoice] Loading from %s (mmap)", model_dir)
 
@@ -123,25 +123,6 @@ class SenseVoiceEngine(BaseEngine):
 
         self._model_name = "sensevoice"
         logger.info("[sensevoice] Model ready")
-
-    def _download_model(self, target_dir: str):
-        """冷启动：从 modelscope 下载 SenseVoiceSmall 到缓存目录"""
-        import shutil
-        from modelscope.hub.snapshot_download import snapshot_download
-
-        logger.info("[sensevoice] First run: downloading model from modelscope (~900MB)...")
-        parent = str(Path(target_dir).parent)
-        # snapshot_download 下载到 parent/iic/SenseVoiceSmall/
-        downloaded = snapshot_download("iic/SenseVoiceSmall", cache_dir=parent)
-        logger.info("[sensevoice] Downloaded to %s", downloaded)
-        # 展平到 target_dir
-        for f in Path(downloaded).iterdir():
-            dest = Path(target_dir) / f.name
-            if not dest.exists():
-                shutil.move(str(f), str(dest))
-        # 清理嵌套空目录
-        shutil.rmtree(downloaded, ignore_errors=True)
-        logger.info("[sensevoice] Model files moved to %s", target_dir)
 
     def load_model(self, model_name: str) -> None:
         self._ensure_model_loaded()
