@@ -50,12 +50,12 @@ STT_ENGINE=sensevoice-q8 uvicorn app:app --host 0.0.0.0 --port 8001 --workers 1
 │   │   ├── _ensure_model_loaded()  ← 加载流程：缓存检查→下载→加载
 │   │   ├── _check_model_cached()   ← 子类告知缓存是否存在（抽象）
 │   │   ├── _load_model()           ← 子类实现具体加载（抽象）
-│   │   ├── _auto_download()        ← 基类 ModelScope，whisper 覆盖走 HF
+│   │   ├── _auto_download()        ← 子类实现下载（抽象）
 │   │   ├── unload()                ← 基类统一卸载（del + gc.collect）
 │   │   └── transcribe()            ← 子类实现转录（抽象）
-│   ├── sensevoice_q8.py        # check + load + transcribe + info
-│   ├── sensevoice_torch.py     # check + load + transcribe + info
-│   └── whisper_engine.py       # check + load + transcribe + info + _auto_download
+│   ├── sensevoice_q8.py        # check + load + transcribe + info + download
+│   ├── sensevoice_torch.py     # check + load + transcribe + info + download
+│   └── whisper_engine.py       # check + load + transcribe + info + download
 ├── models/                      # 模型缓存（STT_MODEL_DIR）
 │   ├── sensevoice-q8/          # model.int8.onnx 228MB + tokens.txt
 │   └── sensevoice/             # model.pt 893MB + config 等
@@ -66,7 +66,7 @@ STT_ENGINE=sensevoice-q8 uvicorn app:app --host 0.0.0.0 --port 8001 --workers 1
 └── README.md
 ```
 
-新增引擎仅需继承 `BaseEngine`，实现 `_check_model_cached()`、`_load_model()`、`transcribe()`、`info()` 四个抽象方法，`_auto_download()` 和 `unload()` 由基类自动管理。
+新增引擎仅需继承 `BaseEngine`，实现 `_check_model_cached()`、`_auto_download()`、`_load_model()`、`transcribe()`、`info()` 五个抽象方法，`unload()` 由基类自动管理。
 
 ## mmap 内存管理
 

@@ -5,6 +5,9 @@ model.pt 为 FP32 权重（893MB），通过 mmap 懒加载，RSS ~530MB。
 """
 
 from __future__ import annotations
+import os
+import shutil
+import tempfile
 import time
 import re
 import gc
@@ -68,6 +71,7 @@ def _restore_funasr_loader(original):
 class SenseVoiceEngine(BaseEngine):
 
     MODEL_DIR = "sensevoice"
+    MODEL_REPO = "iic/SenseVoiceSmall"
 
     def info(self) -> EngineInfo:
         return EngineInfo(
@@ -77,11 +81,44 @@ class SenseVoiceEngine(BaseEngine):
             default_model="sensevoice",
             supports_language_param=False,
             supports_streaming=False,
-            modelscope_repo="iic/SenseVoiceSmall",
         )
 
     def _check_model_cached(self) -> bool:
         return (self.cache_dir / self.MODEL_DIR / "model.pt").exists()
+
+    def _auto_download(self) -> None:
+        """从 ModelScope 下载 SenseVoiceSmall 并展平到缓存目录。"""
+        from modelscope.hub.snapshot_download import snapshot_download
+
+        model_dir = self.cache_dir / self.MODEL_DIR
+        model_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("[sensevoice] Auto-downloading from ModelScope: %s", self.MODEL_REPO)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            downloaded = snapshot_download(self.MODEL_REPO, cache_dir=tmp_dir)
+            src = Path(downloaded)
+            if src.exists():
+                for f in src.iterdir():
+                    dst = model_dir / f.name
+                    if not dst.exists():
+                        if f.is_dir():
+                            shutil.copytree(str(f), str(dst))
+                        else:
+                            shutil.copy2(str(f), str(dst))
+                        logger.info("[sensevoice] Copied: %s", f.name)
+            else:
+                for root, dirs, files in os.walk(tmp_dir):
+                    for f in files:
+                        src_file = Path(root) / f
+                        if not (model_dir / f).exists():
+                            shutil.copy2(str(src_file), str(model_dir / f))
+                            logger.info("[sensevoice] Copied: %s", f)
+
+        if not self._check_model_cached():
+            raise FileNotFoundError(
+                f"Auto-download completed but model.pt not found in {model_dir}"
+            )
+        logger.info("[sensevoice] Auto-download complete")
 
     def _load_model(self) -> None:
         from funasr import AutoModel

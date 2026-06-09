@@ -2,10 +2,12 @@
 SenseVoice Q8 引擎实现（sherpa-onnx + INT8 量化 ONNX）
 
 model.int8.onnx 为 INT8 量化权重（~228MB），通过 sherpa-onnx → onnxruntime 推理。
-Monkey patch sherpa_onnx.OfflineRecognizer.from_sense_voice 注入 mmap 加载。
 """
 
 from __future__ import annotations
+import os
+import shutil
+import tempfile
 import time
 import re
 import gc
@@ -18,10 +20,6 @@ from . import BaseEngine, TranscribeResult, EngineInfo, register_engine
 logger = logging.getLogger("stt-service")
 _RICH_TAG_RE = re.compile(r"<\|[^|]*\|>")
 
-
-# ---------------------------------------------------------------------------
-# Monkey patch
-# ---------------------------------------------------------------------------
 
 def _patch_sherpa_onnx_mmap():
     import sherpa_onnx
@@ -58,14 +56,11 @@ def _restore_sherpa_onnx(_original):
     sherpa_onnx.OfflineRecognizer.from_sense_voice = _original
 
 
-# ---------------------------------------------------------------------------
-# 引擎
-# ---------------------------------------------------------------------------
-
 @register_engine("sensevoice-q8")
 class SenseVoiceQ8Engine(BaseEngine):
 
     MODEL_DIR = "sensevoice-q8"
+    MODEL_REPO = "poloniumrock/SenseVoiceSmallOnnx"
 
     def info(self) -> EngineInfo:
         return EngineInfo(
@@ -73,13 +68,46 @@ class SenseVoiceQ8Engine(BaseEngine):
             display_name="SenseVoice-Small Q8 (sherpa-onnx INT8)",
             models=["sensevoice-q8"],
             default_model="sensevoice-q8",
-            supports_language_param=False,  # language 在 _load_model() 时写死，per-request 参数无效
+            supports_language_param=False,
             supports_streaming=False,
-            modelscope_repo="poloniumrock/SenseVoiceSmallOnnx",
         )
 
     def _check_model_cached(self) -> bool:
         return (self.cache_dir / self.MODEL_DIR / "model.int8.onnx").exists()
+
+    def _auto_download(self) -> None:
+        """从 ModelScope 下载 SenseVoiceSmallOnnx 并展平到缓存目录。"""
+        from modelscope.hub.snapshot_download import snapshot_download
+
+        model_dir = self.cache_dir / self.MODEL_DIR
+        model_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("[sensevoice-q8] Auto-downloading from ModelScope: %s", self.MODEL_REPO)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            downloaded = snapshot_download(self.MODEL_REPO, cache_dir=tmp_dir)
+            src = Path(downloaded)
+            if src.exists():
+                for f in src.iterdir():
+                    dst = model_dir / f.name
+                    if not dst.exists():
+                        if f.is_dir():
+                            shutil.copytree(str(f), str(dst))
+                        else:
+                            shutil.copy2(str(f), str(dst))
+                        logger.info("[sensevoice-q8] Copied: %s", f.name)
+            else:
+                for root, dirs, files in os.walk(tmp_dir):
+                    for f in files:
+                        src_file = Path(root) / f
+                        if not (model_dir / f).exists():
+                            shutil.copy2(str(src_file), str(model_dir / f))
+                            logger.info("[sensevoice-q8] Copied: %s", f)
+
+        if not self._check_model_cached():
+            raise FileNotFoundError(
+                f"Auto-download completed but model.int8.onnx not found in {model_dir}"
+            )
+        logger.info("[sensevoice-q8] Auto-download complete")
 
     def _load_model(self) -> None:
         import sherpa_onnx
@@ -136,4 +164,3 @@ class SenseVoiceQ8Engine(BaseEngine):
             emotion=emotion,
             event=event,
         )
-
