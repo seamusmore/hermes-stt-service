@@ -47,13 +47,15 @@ STT_ENGINE=sensevoice-q8 uvicorn app:app --host 0.0.0.0 --port 8001 --workers 1
 ├── app.py                       # FastAPI 应用（启动、API 端点、缓存管理）
 ├── engines/
 │   ├── __init__.py              # BaseEngine 模板方法 + 注册表
-│   │   ├── _ensure_model_loaded()  ← 唯一加载入口，基类统一
-│   │   ├── _check_model_cached()   ← 子类告知缓存是否存在
-│   │   ├── _load_model()           ← 子类实现具体加载
-│   │   └── _auto_download()        ← 基类 ModelScope / whisper 覆盖走 HF
-│   ├── sensevoice_q8.py        # 两个方法：check + load
-│   ├── sensevoice_torch.py     # 两个方法：check + load
-│   └── whisper_engine.py       # 两个方法 + _auto_download 覆盖
+│   │   ├── _ensure_model_loaded()  ← 加载流程：缓存检查→下载→加载
+│   │   ├── _check_model_cached()   ← 子类告知缓存是否存在（抽象）
+│   │   ├── _load_model()           ← 子类实现具体加载（抽象）
+│   │   ├── _auto_download()        ← 基类 ModelScope，whisper 覆盖走 HF
+│   │   ├── unload()                ← 基类统一卸载（del + gc.collect）
+│   │   └── transcribe()            ← 子类实现转录（抽象）
+│   ├── sensevoice_q8.py        # check + load + transcribe + info
+│   ├── sensevoice_torch.py     # check + load + transcribe + info
+│   └── whisper_engine.py       # check + load + transcribe + info + _auto_download
 ├── models/                      # 模型缓存（STT_MODEL_DIR）
 │   ├── sensevoice-q8/          # model.int8.onnx 228MB + tokens.txt
 │   └── sensevoice/             # model.pt 893MB + config 等
@@ -64,20 +66,20 @@ STT_ENGINE=sensevoice-q8 uvicorn app:app --host 0.0.0.0 --port 8001 --workers 1
 └── README.md
 ```
 
-新增引擎仅需继承 `BaseEngine`，实现 `_check_model_cached()` 和 `_load_model()` 两个方法，其余流程由基类模板方法自动管理。
+新增引擎仅需继承 `BaseEngine`，实现 `_check_model_cached()`、`_load_model()`、`transcribe()`、`info()` 四个抽象方法，`_auto_download()` 和 `unload()` 由基类自动管理。
 
 ## mmap 内存管理
 
-SenseVoice 两个引擎都通过 monkey-patch 注入 mmap 加载：
+SenseVoice 两个引擎都通过 monkey-patch 注入 mmap 加载，但底层机制不同：
 
-| 引擎 | mmap 策略 | 效果 |
-|------|----------|------|
-| `sensevoice` | patch `funasr.load_pretrained_model` → `torch.load(mmap=True)` | RSS 从 1.4GB 降至 530MB |
-| `sensevoice-q8` | patch `sherpa_onnx.OfflineRecognizer.from_sense_voice` → `onnxruntime.SessionOptions.enable_mmap=True` | RSS 从 694MB 降至 490MB |
+| 引擎 | mmap 策略 | 权重位置 | 内核回收 |
+|------|----------|---------|:---:|
+| `sensevoice` | patch `funasr.load_pretrained_model` → `torch.load(mmap=True)` | page cache（Cached） | ✅ 可丢页 |
+| `sensevoice-q8` | patch `sherpa_onnx.OfflineRecognizer.from_sense_voice` → `onnxruntime.SessionOptions.enable_mmap=True` | 进程堆（AnonPages） | ❌ 需 swap |
 
-mmap 页由内核 page cache 管理，内存紧张时可直接丢弃（无需 swap），下次推理缺页中断按需读回。
+`torch.load(mmap=True)` 让 `param.data` 直接指向文件映射页，权重永久驻留 page cache，内核可在内存紧张时直接回收。onnxruntime 的 `enable_mmap` 只优化文件读取阶段，权重最终拷入内部 arena（AnonPages），不可被内核主动回收。
 
-空闲超时（`STT_IDLE_TIMEOUT`，默认 600s）后自动 `unload()` 释放模型页。
+空闲超时（`STT_IDLE_TIMEOUT`，默认 600s）后自动 `unload()` 释放模型：torch 释放 page cache 引用，ONNX 释放堆内存。
 
 ## 环境变量
 
