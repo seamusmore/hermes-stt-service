@@ -38,25 +38,33 @@ STT_ENGINE=sensevoice-q8 uvicorn app:app --host 0.0.0.0 --port 8001 --workers 1
 
 默认引擎 `sensevoice-q8`（环境变量 `STT_ENGINE=sensevoice-q8`），中文优化 + 语种/情感/事件检测。
 
+**冷启动自动下载**：三个引擎首次加载时如果模型文件不在本地，自动从 ModelScope / HF 镜像拉取，无需手动下载。
+
 ## 代码结构
 
 ```
 /mnt/stt-service/
-├── app.py                      # FastAPI 应用（启动、API 端点、缓存管理）
+├── app.py                       # FastAPI 应用（启动、API 端点、缓存管理）
 ├── engines/
-│   ├── __init__.py             # 引擎抽象层 + 注册表
-│   ├── sensevoice_q8.py       # SenseVoice-Q8（sherpa-onnx INT8 mmap）
-│   ├── sensevoice_torch.py    # SenseVoice-torch（funasr FP32 mmap）
-│   └── whisper_engine.py      # faster-whisper
-├── models/                     # 模型缓存（STT_MODEL_DIR）
-│   ├── sensevoice-q8/         # model.int8.onnx 228MB + tokens.txt
-│   └── sensevoice/            # model.pt 893MB + config 等
-├── stt-service.service         # systemd unit（生产用）
+│   ├── __init__.py              # BaseEngine 模板方法 + 注册表
+│   │   ├── _ensure_model_loaded()  ← 唯一加载入口，基类统一
+│   │   ├── _check_model_cached()   ← 子类告知缓存是否存在
+│   │   ├── _load_model()           ← 子类实现具体加载
+│   │   └── _auto_download()        ← 基类 ModelScope / whisper 覆盖走 HF
+│   ├── sensevoice_q8.py        # 两个方法：check + load
+│   ├── sensevoice_torch.py     # 两个方法：check + load
+│   └── whisper_engine.py       # 两个方法 + _auto_download 覆盖
+├── models/                      # 模型缓存（STT_MODEL_DIR）
+│   ├── sensevoice-q8/          # model.int8.onnx 228MB + tokens.txt
+│   └── sensevoice/             # model.pt 893MB + config 等
+├── stt-service.service          # systemd unit（生产用）
 ├── requirements.txt
 ├── test_stt.py
 ├── manage_cache.py
 └── README.md
 ```
+
+新增引擎仅需继承 `BaseEngine`，实现 `_check_model_cached()` 和 `_load_model()` 两个方法，其余流程由基类模板方法自动管理。
 
 ## mmap 内存管理
 
