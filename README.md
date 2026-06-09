@@ -32,7 +32,7 @@ STT_ENGINE=sensevoice-q8 uvicorn app:app --host 0.0.0.0 --port 8001 --workers 1
 
 | 引擎 | 后端 | 模型 | 进程 RSS | 模型文件 |
 |------|------|------|:---:|:---:|
-| `sensevoice-q8` ★ | sherpa-onnx + INT8 + mmap | SenseVoice-Small 8bit | ~490 MB | 228 MB |
+| `sensevoice-q8` ★ | sherpa-onnx + INT8 | SenseVoice-Small 8bit | ~490 MB | 228 MB |
 | `sensevoice` | funasr + torch FP32 + mmap | iic/SenseVoiceSmall | ~530 MB | 893 MB |
 | `whisper` | faster-whisper | base/small/medium/large | ~370 MB（base） | 142–3000 MB |
 
@@ -70,14 +70,14 @@ STT_ENGINE=sensevoice-q8 uvicorn app:app --host 0.0.0.0 --port 8001 --workers 1
 
 ## mmap 内存管理
 
-SenseVoice 两个引擎都通过 monkey-patch 注入 mmap 加载，但底层机制不同：
+**仅 `sensevoice`（torch）引擎实现了真正的 mmap**——`sensevoice-q8`（ONNX）没有等效机制。
 
-| 引擎 | mmap 策略 | 权重位置 | 内核回收 |
-|------|----------|---------|:---:|
-| `sensevoice` | patch `funasr.load_pretrained_model` → `torch.load(mmap=True)` | page cache（Cached） | ✅ 可丢页 |
-| `sensevoice-q8` | patch `sherpa_onnx.OfflineRecognizer.from_sense_voice` → `onnxruntime.SessionOptions.enable_mmap=True` | 进程堆（AnonPages） | ❌ 需 swap |
+| 引擎 | 策略 | 权重位置 | 内核回收 |
+|------|------|---------|:---:|
+| `sensevoice` | monkey-patch `funasr.load_pretrained_model` → `torch.load(mmap=True)` | page cache（Cached） | ✅ 可丢页 |
+| `sensevoice-q8` | onnxruntime 内部 arena 加载 | 进程堆（AnonPages） | ❌ 需 swap |
 
-`torch.load(mmap=True)` 让 `param.data` 直接指向文件映射页，权重永久驻留 page cache，内核可在内存紧张时直接回收。onnxruntime 的 `enable_mmap` 只优化文件读取阶段，权重最终拷入内部 arena（AnonPages），不可被内核主动回收。
+`torch.load(mmap=True)` 让 `param.data` 直接指向文件映射页，权重永久驻留 page cache，RSS 从 1.4GB 降至 ~530MB，内核可在内存紧张时直接回收。onnxruntime 无对应机制，权重始终在进程堆中。
 
 空闲超时（`STT_IDLE_TIMEOUT`，默认 600s）后自动 `unload()` 释放模型：torch 释放 page cache 引用，ONNX 释放堆内存。
 
