@@ -73,7 +73,7 @@ class SenseVoiceQ8Engine(BaseEngine):
             display_name="SenseVoice-Small Q8 (sherpa-onnx INT8)",
             models=["sensevoice-q8"],
             default_model="sensevoice-q8",
-            supports_language_param=True,
+            supports_language_param=False,  # language 在 _load_model() 时写死，per-request 参数无效
             supports_streaming=False,
             modelscope_repo="poloniumrock/SenseVoiceSmallOnnx",
         )
@@ -137,10 +137,3 @@ class SenseVoiceQ8Engine(BaseEngine):
             event=event,
         )
 
-    def unload(self) -> None:
-        if self._model is not None:
-            del self._model
-            self._model = None
-            self._model_name = None
-            gc.collect()
-            logger.info("[sensevoice-q8] Model unloaded")

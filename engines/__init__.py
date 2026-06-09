@@ -10,6 +10,7 @@ STT 引擎抽象层
 
 from __future__ import annotations
 import os
+import gc
 import time
 import logging
 from abc import ABC, abstractmethod
@@ -150,6 +151,15 @@ class BaseEngine(ABC):
             "model_loaded": self.model_loaded,
             "model_name": self._model_name,
         }
+
+    def unload(self) -> None:
+        """卸载模型释放内存。子类有特殊清理需求时可 override。"""
+        if self._model is not None:
+            del self._model
+            self._model = None
+            self._model_name = None
+            gc.collect()
+            logger.info("[%s] Model unloaded", self.info().name)
 
 
 # ---------------------------------------------------------------------------

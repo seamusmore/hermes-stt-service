@@ -10,6 +10,9 @@ faster-whisper>=1.2.1
 
 # STT 引擎：SenseVoice (funasr + torch)
 funasr>=1.0.0
+
+# STT 引擎：SenseVoice Q8 (sherpa-onnx INT8)
+sherpa-onnx>=1.13.0
 soundfile>=0.12.0
 
 # 数据处理

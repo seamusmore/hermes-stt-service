@@ -130,11 +130,3 @@ class SenseVoiceEngine(BaseEngine):
             emotion=emotion,
             event=event,
         )
-
-    def unload(self) -> None:
-        if self._model is not None:
-            del self._model
-            self._model = None
-            self._model_name = None
-            gc.collect()
-            logger.info("[sensevoice] Model unloaded")

@@ -91,11 +91,15 @@ class WhisperEngine(BaseEngine):
         logger.info("[whisper] Loading model from cache: %s", full_name)
         start = time.time()
 
+        old_endpoint = os.environ.get("HF_ENDPOINT", "https://huggingface.co")
         os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-        self._model = WhisperModel(
-            full_name, device="cpu", compute_type="int8",
-            download_root=download_root, local_files_only=True,
-        )
+        try:
+            self._model = WhisperModel(
+                full_name, device="cpu", compute_type="int8",
+                download_root=download_root, local_files_only=True,
+            )
+        finally:
+            os.environ["HF_ENDPOINT"] = old_endpoint
 
         elapsed = time.time() - start
         logger.info("[whisper] Model loaded in %.2fs", elapsed)
@@ -118,10 +122,3 @@ class WhisperEngine(BaseEngine):
             duration_ms=int(info.duration * 1000) if hasattr(info, "duration") else None,
             processing_time_ms=int((time.time() - start) * 1000),
         )
-
-    def unload(self) -> None:
-        if self._model is not None:
-            del self._model
-            self._model = None
-            self._model_name = None
-            logger.info("[whisper] Model unloaded")
