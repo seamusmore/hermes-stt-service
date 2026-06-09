@@ -1,9 +1,8 @@
 """
 faster-whisper 引擎实现
 
-基于 Systran/faster-whisper 的 Whisper 模型推理，
-支持 tiny/base/small/medium/large 五种规格。
-自动下载：首次加载时通过 HF 镜像拉取模型。
+基于 Systran/faster-whisper，支持 tiny/base/small/medium/large。
+覆盖 _auto_download() 走 HF 镜像，其余流程由基类模板方法 _ensure_model_loaded 统一管理。
 """
 
 from __future__ import annotations
@@ -20,9 +19,7 @@ logger = logging.getLogger("stt-service")
 
 @register_engine("whisper")
 class WhisperEngine(BaseEngine):
-    """faster-whisper 引擎"""
 
-    # 模型名称 → HuggingFace repo
     MODEL_MAP = {
         "tiny":   "Systran/faster-whisper-tiny",
         "base":   "Systran/faster-whisper-base",
@@ -31,45 +28,37 @@ class WhisperEngine(BaseEngine):
         "large":  "Systran/faster-whisper-large-v3",
     }
 
+    LEGACY_CACHE_DIR = Path("/mnt/stt-service/models/whisper")
+
     def info(self) -> EngineInfo:
         return EngineInfo(
             name="whisper",
             display_name="faster-whisper (Whisper)",
             models=list(self.MODEL_MAP.keys()),
             default_model="base",
-            supports_language_param=True,
-            supports_streaming=False,
         )
 
-    # 旧缓存目录（兼容）
-    LEGACY_CACHE_DIR = Path("/mnt/stt-service/models/whisper")
-
     def _resolve_download_root(self) -> str:
-        """确定模型下载/查找目录：优先旧缓存，其次新缓存"""
         for d in [self.LEGACY_CACHE_DIR, self.cache_dir]:
             if d.exists():
                 return str(d)
         return str(self.LEGACY_CACHE_DIR)
 
-    def _is_model_cached(self, model_name: str) -> bool:
-        """检查模型是否已在 HF 缓存中"""
-        full_name = self.MODEL_MAP.get(model_name, model_name)
-        repo_dir_name = f"models--{full_name.replace('/', '--')}"
+    def _full_name(self) -> str:
+        return self.MODEL_MAP.get(self._model_name or self.info().default_model,
+                                  self._model_name or self.info().default_model)
+
+    def _check_model_cached(self) -> bool:
+        full_name = self._full_name()
+        repo_dir = f"models--{full_name.replace('/', '--')}"
         for d in [self.LEGACY_CACHE_DIR, self.cache_dir]:
-            if (d / repo_dir_name).exists():
+            if (d / repo_dir).exists():
                 return True
         return False
 
-    def _auto_download(self, model_dir: Path, expected_file: str) -> None:
-        """从 HuggingFace 镜像自动下载 Whisper 模型。
-
-        覆盖基类的 ModelScope 下载逻辑，改用 faster-whisper 内置
-        的 HuggingFace 下载机制。
-        """
-        model_name = self._model_name or self.info().default_model
-        full_name = self.MODEL_MAP.get(model_name, model_name)
-
-        logger.info("[whisper] Auto-downloading model from HF mirror: %s", full_name)
+    def _auto_download(self) -> None:
+        full_name = self._full_name()
+        logger.info("[whisper] Auto-downloading from HF mirror: %s", full_name)
 
         from faster_whisper import WhisperModel
 
@@ -80,64 +69,42 @@ class WhisperEngine(BaseEngine):
         try:
             download_root = self._resolve_download_root()
             Path(download_root).mkdir(parents=True, exist_ok=True)
-            # 构造一个临时模型仅触发下载，完成后立即释放
             tmp_model = WhisperModel(
-                full_name,
-                device="cpu",
-                compute_type="int8",
-                download_root=download_root,
-                local_files_only=False,
+                full_name, device="cpu", compute_type="int8",
+                download_root=download_root, local_files_only=False,
             )
             del tmp_model
         finally:
             os.environ["HF_HUB_OFFLINE"] = old_offline
 
-        # 检查下载是否成功
-        if not self._is_model_cached(model_name):
-            raise FileNotFoundError(
-                f"Whisper model download failed: {full_name}. "
-                f"Check network or try /cache/download API."
-            )
+        if not self._check_model_cached():
+            raise FileNotFoundError(f"Whisper model download failed: {full_name}")
         logger.info("[whisper] Auto-download complete")
 
-    def load_model(self, model_name: str) -> None:
-        if self._model is not None and self._model_name == model_name:
-            return
-
+    def _load_model(self) -> None:
         from faster_whisper import WhisperModel
 
-        full_name = self.MODEL_MAP.get(model_name, model_name)
+        full_name = self._full_name()
         download_root = self._resolve_download_root()
         Path(download_root).mkdir(parents=True, exist_ok=True)
 
-        self._model_name = model_name  # 提前设置，供 _auto_download 使用
-
-        # 检查缓存，没有则触发自动下载
-        if not self._is_model_cached(model_name):
-            self._auto_download(Path(download_root), "")
-
-        logger.info("[whisper] Loading model from cache: %s", model_name)
+        logger.info("[whisper] Loading model from cache: %s", full_name)
         start = time.time()
 
         os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-
         self._model = WhisperModel(
-            full_name,
-            device="cpu",
-            compute_type="int8",
-            download_root=download_root,
-            local_files_only=True,
+            full_name, device="cpu", compute_type="int8",
+            download_root=download_root, local_files_only=True,
         )
 
         elapsed = time.time() - start
         logger.info("[whisper] Model loaded in %.2fs", elapsed)
 
     def transcribe(self, audio_path: str, language: Optional[str] = None) -> TranscribeResult:
-        start = time.time()
-
         if self._model is None:
             raise RuntimeError("Model not loaded")
 
+        start = time.time()
         kwargs = {"beam_size": 5}
         if language and language != "auto":
             kwargs["language"] = language
@@ -145,12 +112,16 @@ class WhisperEngine(BaseEngine):
         segments, info = self._model.transcribe(audio_path, **kwargs)
         text = " ".join(seg.text.strip() for seg in segments)
 
-        processing_ms = int((time.time() - start) * 1000)
-        duration_ms = int(info.duration * 1000) if hasattr(info, "duration") else None
-
         return TranscribeResult(
             text=text,
             language=language or getattr(info, "language", "auto"),
-            duration_ms=duration_ms,
-            processing_time_ms=processing_ms,
+            duration_ms=int(info.duration * 1000) if hasattr(info, "duration") else None,
+            processing_time_ms=int((time.time() - start) * 1000),
         )
+
+    def unload(self) -> None:
+        if self._model is not None:
+            del self._model
+            self._model = None
+            self._model_name = None
+            logger.info("[whisper] Model unloaded")

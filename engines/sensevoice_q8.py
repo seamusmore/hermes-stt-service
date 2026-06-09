@@ -2,8 +2,7 @@
 SenseVoice Q8 引擎实现（sherpa-onnx + INT8 量化 ONNX）
 
 model.int8.onnx 为 INT8 量化权重（~228MB），通过 sherpa-onnx → onnxruntime 推理。
-Monkey patch sherpa_onnx.OfflineRecognizer.from_sense_voice 注入 mmap 加载，
-效果等同于旧引擎对 funasr.load_pretrained_model 做的 torch.load(mmap=True)。
+Monkey patch sherpa_onnx.OfflineRecognizer.from_sense_voice 注入 mmap 加载。
 """
 
 from __future__ import annotations
@@ -17,18 +16,15 @@ from typing import Optional
 from . import BaseEngine, TranscribeResult, EngineInfo, register_engine
 
 logger = logging.getLogger("stt-service")
-
 _RICH_TAG_RE = re.compile(r"<\|[^|]*\|>")
 
 
 # ---------------------------------------------------------------------------
-# Monkey patch sherpa-onnx：拦截 from_sense_voice，注入 mmap
+# Monkey patch
 # ---------------------------------------------------------------------------
 
 def _patch_sherpa_onnx_mmap():
-    """替换 sherpa_onnx.OfflineRecognizer.from_sense_voice，注入 mmap 加载。"""
     import sherpa_onnx
-
     _original = sherpa_onnx.OfflineRecognizer.from_sense_voice
 
     @classmethod
@@ -58,7 +54,6 @@ def _patch_sherpa_onnx_mmap():
 
 
 def _restore_sherpa_onnx(_original):
-    """恢复 sherpa_onnx.OfflineRecognizer.from_sense_voice 原始方法"""
     import sherpa_onnx
     sherpa_onnx.OfflineRecognizer.from_sense_voice = _original
 
@@ -69,7 +64,6 @@ def _restore_sherpa_onnx(_original):
 
 @register_engine("sensevoice-q8")
 class SenseVoiceQ8Engine(BaseEngine):
-    """SenseVoice-Small Q8 引擎 (sherpa-onnx, INT8)"""
 
     MODEL_DIR = "sensevoice-q8"
 
@@ -84,18 +78,15 @@ class SenseVoiceQ8Engine(BaseEngine):
             modelscope_repo="poloniumrock/SenseVoiceSmallOnnx",
         )
 
-    def _ensure_model_loaded(self) -> None:
-        if self._model is not None:
-            return
+    def _check_model_cached(self) -> bool:
+        return (self.cache_dir / self.MODEL_DIR / "model.int8.onnx").exists()
 
+    def _load_model(self) -> None:
         import sherpa_onnx
 
         model_dir = self.cache_dir / self.MODEL_DIR
         model_path = str(model_dir / "model.int8.onnx")
         tokens_path = str(model_dir / "tokens.txt")
-
-        if not Path(model_path).exists():
-            self._auto_download(model_dir, model_path)
 
         logger.info("[sensevoice-q8] Loading from %s", model_path)
 
@@ -114,17 +105,11 @@ class SenseVoiceQ8Engine(BaseEngine):
         self._model_name = "sensevoice-q8"
         logger.info("[sensevoice-q8] Model ready (INT8 mmap, ~228MB)")
 
-    def load_model(self, model_name: str) -> None:
-        self._ensure_model_loaded()
-
-    def transcribe(
-        self, audio_path: str, language: Optional[str] = None
-    ) -> TranscribeResult:
+    def transcribe(self, audio_path: str, language: Optional[str] = None) -> TranscribeResult:
         if self._model is None:
             raise RuntimeError("Model not loaded")
 
         import soundfile as sf
-
         start = time.time()
 
         samples, sr = sf.read(audio_path, dtype="float32")
@@ -134,24 +119,18 @@ class SenseVoiceQ8Engine(BaseEngine):
         stream = self._model.create_stream()
         stream.accept_waveform(sr, samples)
         self._model.decode_stream(stream)
-
         processing_ms = int((time.time() - start) * 1000)
 
         raw_text = stream.result.text
-
         emotion = None
-        event = None
         emo_match = re.search(r"<\|EMO_(\w+)\|>", raw_text)
         if emo_match:
             emotion = emo_match.group(1).lower()
         event_tags = re.findall(r"<\|((?!EMO_)[A-Z_]+)\|>", raw_text)
-        if event_tags:
-            event = ",".join(event_tags).lower()
-
-        text = _RICH_TAG_RE.sub("", raw_text).strip()
+        event = ",".join(event_tags).lower() if event_tags else None
 
         return TranscribeResult(
-            text=text,
+            text=_RICH_TAG_RE.sub("", raw_text).strip(),
             language=language or "auto",
             processing_time_ms=processing_ms,
             emotion=emotion,
