@@ -60,21 +60,33 @@ class WhisperEngine(BaseEngine):
 
         from faster_whisper import WhisperModel
 
-        # 设置 HuggingFace 镜像和离线模式
         os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-        os.environ["HF_HUB_OFFLINE"] = "1"
 
         full_name = self.MODEL_MAP.get(model_name, model_name)
         download_root = self._resolve_download_root()
         Path(download_root).mkdir(parents=True, exist_ok=True)
 
-        self._model = WhisperModel(
-            full_name,
-            device="cpu",
-            compute_type="int8",
-            download_root=download_root,
-            local_files_only=True,
-        )
+        # 先尝试离线加载，失败则自动下载
+        try:
+            self._model = WhisperModel(
+                full_name,
+                device="cpu",
+                compute_type="int8",
+                download_root=download_root,
+                local_files_only=True,
+            )
+        except Exception:
+            logger.info("[whisper] Model not cached, auto-downloading %s...", full_name)
+            os.environ["HF_HUB_OFFLINE"] = "0"
+            self._model = WhisperModel(
+                full_name,
+                device="cpu",
+                compute_type="int8",
+                download_root=download_root,
+                local_files_only=False,
+            )
+            os.environ["HF_HUB_OFFLINE"] = "1"
+
         self._model_name = model_name
 
         elapsed = time.time() - start
